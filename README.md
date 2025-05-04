@@ -1,4 +1,4 @@
-```markdown
+[![Rust](https://github.com/SieteCuatro/dead_simple_db/actions/workflows/rust.yml/badge.svg?branch=master)](https://github.com/SieteCuatro/dead_simple_db/actions/workflows/rust.yml)
 # Dead Simple DB
 
 A basic, persistent key-value store implemented in Rust with an HTTP API built using Axum and Tokio. It focuses on simplicity and demonstrating core database concepts like append-only logging, indexing, snapshotting, and compaction.
@@ -382,4 +382,3 @@ This model allows high read concurrency while ensuring safety during write opera
 ## License
 
 This project is currently unlicensed. Please add a license file (e.g., MIT, Apache-2.0) if you intend to distribute or share it.
-```
