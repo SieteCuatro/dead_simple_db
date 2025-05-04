@@ -1,4 +1,4 @@
-[![Rust](https://github.com/SieteCuatro/dead_simple_db/actions/workflows/rust.yml/badge.svg?branch=master)](https://github.com/SieteCuatro/dead_simple_db/actions/workflows/rust.yml)
+[![Rust](https://github.com/SieteCuatro/dead_simple_db/actions/workflows/rust.yml/badge.svg?branch=master)](https://github.com/SieteCuatro/dead_simple_db/actions/workflows/rust.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![Dependency Status](https://deps.rs/repo/github/SieteCuatro/dead_simple_db/status.svg)](https://deps.rs/repo/github/SieteCuatro/dead_simple_db) [![Rust](https://img.shields.io/badge/rust-%23E56F14.svg?style=flat&logo=rust)](https://www.rust-lang.org) 
 # Dead Simple DB
 
 A basic, persistent key-value store implemented in Rust with an HTTP API built using Axum and Tokio. It focuses on simplicity and demonstrating core database concepts like append-only logging, indexing, snapshotting, and compaction.
