@@ -1,51 +1,57 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, ValueEnum, ValueSource};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use std::error::Error;
 use std::process;
+use config::{Config, ConfigError, Environment, File}; // Import config types
+use serde::Deserialize;
 
-// Use the library crate name to bring items into scope
-// This single line correctly imports everything needed from the library
+// Use the library crate name
 use dead_simple_db::{api, error, db::{SimpleDb, SyncStrategy}};
 
-// This specific import is still useful for using `DbError` directly below
-// but we will use the qualified path `error::DbError` in the match for clarity
+// Keep DbError import if used directly, otherwise allow unused
 #[allow(unused_imports)]
-use error::DbError;
+use dead_simple_db::error::DbError;
 
 
-/// Simple Key-Value Database Server
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Path to the database log file
-    #[arg(short, long, value_name = "FILE", default_value = "data.dblog")]
+// --- Configuration Structures ---
+
+// Structure for config file values
+#[derive(Deserialize, Debug, Default)]
+struct Settings {
+    #[serde(default = "default_data_file")]
     data_file: PathBuf,
-
-    /// Path to the index snapshot file (default: data_file + .index)
-    #[arg(long, value_name = "FILE")]
-    index_file: Option<PathBuf>,
-
-    /// Network address to listen on (e.g., 127.0.0.1:7878)
-    #[arg(short, long, value_name = "IP:PORT", default_value = "127.0.0.1:7878")]
+    index_file: Option<PathBuf>, // Make index_file optional in config
+    #[serde(default = "default_listen_addr")]
     listen: SocketAddr,
-
-    /// Write synchronization strategy
-    #[arg(long, value_enum, default_value_t = CliSyncStrategy::Never)]
+    #[serde(default = "default_sync_strategy")]
     sync: CliSyncStrategy,
 }
 
-#[derive(ValueEnum, Clone, Debug, Copy)]
+// Default value functions for Settings
+fn default_data_file() -> PathBuf {
+    PathBuf::from("data.dblog")
+}
+
+fn default_listen_addr() -> SocketAddr {
+    "127.0.0.1:7878".parse().expect("Default listen address should be valid")
+}
+
+fn default_sync_strategy() -> CliSyncStrategy {
+    CliSyncStrategy::Never
+}
+
+// Enum for Sync Strategy, used by both CLI and Config
+#[derive(ValueEnum, Clone, Debug, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")] // Allows "always", "never" in TOML
 enum CliSyncStrategy {
-    /// Sync every write to disk (safer, slower)
     Always,
-    /// Let the OS cache writes (faster, risk of data loss on crash)
     Never,
 }
 
-// Convert CLI enum to internal enum
+// Convert CLI/Config enum to internal DB enum
 impl From<CliSyncStrategy> for SyncStrategy {
     fn from(cli_strategy: CliSyncStrategy) -> Self {
         match cli_strategy {
@@ -55,80 +61,195 @@ impl From<CliSyncStrategy> for SyncStrategy {
     }
 }
 
+// --- Command Line Argument Structure ---
+
+/// Simple Key-Value Database Server
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to a configuration file (TOML format)
+    #[arg(short, long, value_name = "FILE")]
+    config: Option<PathBuf>,
+
+    /// Path to the database log file (overrides config)
+    #[arg(short = 'd', long, value_name = "FILE")] // Changed short arg to 'd'
+    data_file: Option<PathBuf>,
+
+    /// Path to the index snapshot file (overrides config)
+    #[arg(long, value_name = "FILE")]
+    index_file: Option<PathBuf>,
+
+    /// Network address to listen on (e.g., 127.0.0.1:7878) (overrides config)
+    #[arg(short, long, value_name = "IP:PORT")]
+    listen: Option<SocketAddr>,
+
+    /// Write synchronization strategy (overrides config)
+    #[arg(long, value_enum)]
+    sync: Option<CliSyncStrategy>,
+}
+
+
+// --- Main Application Logic ---
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Initialize tracing subscriber
+    // Initialize tracing subscriber (early)
     tracing_subscriber::fmt()
-        .with_max_level(Level::INFO) // Default INFO level
+        .with_max_level(Level::INFO)
         .with_target(true)
         .init();
 
-    // Parse command line arguments
+    // --- Configuration Loading ---
+
+    // 1. Parse CLI args *first* to potentially get config path
     let args = Args::parse();
 
-    info!("Starting Dead Simple DB Server...");
-    info!("Data file: {:?}", args.data_file);
-    let sync_strategy: SyncStrategy = args.sync.into();
-    info!("Sync strategy: {:?}", sync_strategy);
+    // 2. Build configuration layers
+    let config_builder = Config::builder()
+        // Start with base defaults defined in the Settings struct defaults
+        .set_default("data_file", default_data_file().to_str().unwrap_or("data.dblog"))?
+        .set_default("listen", default_listen_addr().to_string())?
+        .set_default("sync", "never")?
+        // index_file has no simple default, handled later
+        ;
 
-    // Determine index file path
-    let index_file_path = args
-        .index_file
-        .unwrap_or_else(|| args.data_file.with_extension("dblog.index"));
-    info!("Index file: {:?}", index_file_path);
+    // 3. Add config file source if specified
+    let config_builder = match &args.config {
+        Some(config_path) => {
+            info!("Attempting to load configuration from: {:?}", config_path);
+            // Make it required=true ONLY if the --config flag was explicitly provided
+            let required = args.config.is_some();
+             config_builder.add_source(File::from(config_path.clone()).required(required))
+        }
+        None => {
+            // Try loading a default config file name (e.g., config.toml) optionally
+            info!("No --config specified, attempting to load 'config.toml' optionally");
+            config_builder.add_source(File::with_name("config").required(false))
+        }
+    };
+
+    // 4. (Optional) Add environment variable source
+    // config_builder = config_builder.add_source(Environment::with_prefix("APP").separator("__"));
+
+    // 5. Finalize config build
+    let cfg = match config_builder.build() {
+         Ok(c) => c,
+         Err(e) => {
+             // Handle specific errors like file not found vs parsing errors
+             match e {
+                 ConfigError::FileParse { uri, cause } => {
+                     error!("Error parsing configuration file {:?}: {}", uri.unwrap_or_else(|| "Unknown".to_string()), cause);
+                     eprintln!("Error: Failed to parse configuration file. Please check the format.");
+                     process::exit(1); // Exit on parse error
+                 }
+                 ConfigError::NotFound(path) if args.config.is_some() => {
+                      // Only error if --config was EXPLICITLY provided and file not found
+                      error!("Configuration file specified but not found: {}", path);
+                      eprintln!("Error: Configuration file specified via --config was not found: {}", path);
+                      process::exit(1); // Exit if specified config is missing
+                 }
+                 ConfigError::NotFound(_) => {
+                     // Ignore if default config file wasn't found
+                     info!("Default configuration file not found, using defaults and CLI arguments.");
+                 }
+                 _ => {
+                     // Other errors (e.g., type mismatches)
+                     error!("Error loading configuration: {}", e);
+                     eprintln!("Error: Could not load configuration: {}", e);
+                     process::exit(1); // Exit on other config errors
+                 }
+             }
+             // If we ignored NotFound for default file, build minimal defaults
+             Config::builder()
+                 .set_default("data_file", default_data_file().to_str().unwrap_or("data.dblog"))?
+                 .set_default("listen", default_listen_addr().to_string())?
+                 .set_default("sync", "never")?
+                 .build()?
+         }
+    };
 
 
-    // --- Database Initialization ---
-    // Ensure parent directory exists
-     if let Some(parent) = args.data_file.parent() {
+    // 6. Deserialize base settings from config object
+    let base_settings: Settings = match cfg.try_deserialize() {
+         Ok(s) => s,
+         Err(e) => {
+             error!("Error deserializing configuration settings: {}", e);
+             eprintln!("Error: Configuration values are invalid: {}", e);
+             process::exit(1);
+         }
+     };
+
+
+    // --- Merging CLI arguments over Config/Defaults ---
+
+    // Determine final values, prioritizing CLI flags if they were explicitly provided
+    let final_data_file = args.data_file.clone().unwrap_or(base_settings.data_file);
+
+    // Special handling for index_file: default depends on data_file
+    let final_index_file = args.index_file.clone()
+        .or(base_settings.index_file) // Use config value if present
+        .unwrap_or_else(|| final_data_file.with_extension("dblog.index")); // Calculate default based on final data_file
+
+    let final_listen_addr = args.listen.unwrap_or(base_settings.listen);
+    let final_sync_strategy_cli = args.sync.unwrap_or(base_settings.sync);
+    let final_sync_strategy: SyncStrategy = final_sync_strategy_cli.into(); // Convert to internal type
+
+
+    // --- Log final configuration ---
+    info!("--- Final Configuration ---");
+    info!("Data file: {:?}", final_data_file);
+    info!("Index file: {:?}", final_index_file);
+    info!("Listen address: {}", final_listen_addr);
+    info!("Sync strategy: {:?}", final_sync_strategy);
+    info!("---------------------------");
+
+
+    // --- Database Initialization (using final config values) ---
+    if let Some(parent) = final_data_file.parent() {
         if !parent.exists() {
             info!("Creating data directory: {:?}", parent);
-             std::fs::create_dir_all(parent)?;
-         }
-     }
-    if let Some(parent) = index_file_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    if let Some(parent) = final_index_file.parent() {
         if !parent.exists() {
-             info!("Creating index directory: {:?}", parent);
-             std::fs::create_dir_all(parent)?;
-         }
-     }
+            info!("Creating index directory: {:?}", parent);
+            std::fs::create_dir_all(parent)?;
+        }
+    }
 
-
-    let db = match SimpleDb::open(&args.data_file, &index_file_path, sync_strategy) {
+    let db = match SimpleDb::open(&final_data_file, &final_index_file, final_sync_strategy) {
         Ok(db_instance) => Arc::new(db_instance),
         Err(e) => {
             error!("Failed to open database: {}", e);
-            // Provide more context for specific errors if possible
             match e {
-                 // **FIX HERE**: Use the `error` module path
                  error::DbError::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied => {
-                     eprintln!("Error: Permission denied accessing database files ({:?} or {:?}). Please check file/directory permissions.", args.data_file, index_file_path);
+                     eprintln!("Error: Permission denied accessing database files ({:?} or {:?}). Please check file/directory permissions.", final_data_file, final_index_file);
                  }
                  _ => {
                       eprintln!("Error: Could not initialize database: {}", e);
                  }
             }
-            process::exit(1); // Exit cleanly on critical startup error
+            process::exit(1);
         }
     };
     info!("Database opened successfully.");
 
 
     // --- API Router Setup ---
-    let app = api::create_router(db.clone()); // Clone Arc for router
+    let app = api::create_router(db.clone());
 
     // --- Start Server ---
-    let listener = match tokio::net::TcpListener::bind(args.listen).await {
+    let listener = match tokio::net::TcpListener::bind(final_listen_addr).await {
          Ok(l) => l,
          Err(e) => {
-             error!("Failed to bind to address {}: {}", args.listen, e);
-             eprintln!("Error: Could not bind to address {}. Is it already in use?", args.listen);
+             error!("Failed to bind to address {}: {}", final_listen_addr, e);
+             eprintln!("Error: Could not bind to address {}. Is it already in use?", final_listen_addr);
              process::exit(1);
          }
      };
+    info!("Server listening on {}", final_listen_addr);
 
-    info!("Server listening on {}", args.listen);
 
     // --- Graceful Shutdown Handling ---
     let shutdown_signal = async {
@@ -138,27 +259,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
         info!("Received CTRL+C, initiating graceful shutdown...");
     };
 
-    // Serve the application with graceful shutdown
     axum::serve(listener, app.into_make_service())
         .with_graceful_shutdown(shutdown_signal)
         .await
         .map_err(|e| {
              error!("Server error: {}", e);
-             Box::new(e) as Box<dyn Error> // Map error for main's return type
+             Box::new(e) as Box<dyn Error>
         })?;
 
     // --- Perform final actions before exiting ---
     info!("Server shut down gracefully. Performing final sync/cleanup...");
-
-    // Explicitly sync/save snapshot on shutdown (optional but good practice)
-     if let Err(e) = db.save_index_snapshot() {
-         error!("Error saving final index snapshot: {}", e);
-     }
-    if let Err(e) = db.sync() { // Force a final sync regardless of strategy
+    if let Err(e) = db.save_index_snapshot() {
+        error!("Error saving final index snapshot: {}", e);
+    }
+    if let Err(e) = db.sync() {
         error!("Error performing final sync: {}", e);
     }
-
-     // The Arc going out of scope should trigger the Drop impl if this is the last reference.
 
     info!("Shutdown complete.");
     Ok(())

@@ -1,0 +1,39 @@
+# Example configuration file for Dead Simple DB (config.toml)
+
+# --- File Paths ---
+
+# Optional: Specify the path to the main database log file where records are stored.
+# If commented out or omitted, it defaults to "data.dblog" in the current directory.
+# Example Linux/macOS path:
+# data_file = "/var/db/dead_simple_db/data.dblog"
+# Example Windows path (use forward slashes or escaped backslashes):
+# data_file = "C:/Data/dead_simple_db/data.dblog"
+# data_file = "C:\\Data\\dead_simple_db\\data.dblog"
+
+# Optional: Specify the path to the index snapshot file.
+# If commented out or omitted, it defaults to the data_file path with ".index" appended
+# (e.g., if data_file is "data.dblog", index_file defaults to "data.dblog.index").
+# Example Linux/macOS path:
+# index_file = "/var/db/dead_simple_db/data.dblog.index"
+# Example Windows path:
+# index_file = "C:/Data/dead_simple_db/data.dblog.index"
+
+
+# --- Network Settings ---
+
+# Optional: Specify the network IP address and port for the HTTP API server to listen on.
+# Use "0.0.0.0" to listen on all available network interfaces.
+# If commented out or omitted, it defaults to "127.0.0.1:7878".
+# listen = "0.0.0.0:8000"
+# listen = "192.168.1.100:7878"
+
+
+# --- Performance and Durability ---
+
+# Optional: Specify the disk synchronization strategy for writes.
+# Valid values are "always" or "never" (case-insensitive).
+# - "always": Slower but safer. Ensures data is physically written to disk after each operation. Recommended for critical data.
+# - "never": Faster but risks data loss on OS crash or power failure before the OS flushes its cache.
+# If commented out or omitted, it defaults to "never".
+# sync = "always"
+sync = "never"
