@@ -1,11 +1,11 @@
-use clap::{Parser, ValueEnum, ValueSource};
+use clap::{Parser, ValueEnum, parser::ValueSource}; // Corrected import path for ValueSource
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{error, info, warn, Level};
+use tracing::{error, info, Level}; // Removed unused `warn`
 use std::error::Error;
 use std::process;
-use config::{Config, ConfigError, Environment, File}; // Import config types
+use config::{Config, ConfigError, File}; // Removed unused `Environment`
 use serde::Deserialize;
 
 // Use the library crate name
@@ -19,7 +19,8 @@ use dead_simple_db::error::DbError;
 // --- Configuration Structures ---
 
 // Structure for config file values
-#[derive(Deserialize, Debug, Default)]
+// Removed Default derive as SocketAddr and CliSyncStrategy don't implement it
+#[derive(Deserialize, Debug)]
 struct Settings {
     #[serde(default = "default_data_file")]
     data_file: PathBuf,
@@ -30,7 +31,7 @@ struct Settings {
     sync: CliSyncStrategy,
 }
 
-// Default value functions for Settings
+// Default value functions for Settings (remain the same)
 fn default_data_file() -> PathBuf {
     PathBuf::from("data.dblog")
 }
@@ -43,15 +44,15 @@ fn default_sync_strategy() -> CliSyncStrategy {
     CliSyncStrategy::Never
 }
 
-// Enum for Sync Strategy, used by both CLI and Config
+// Enum for Sync Strategy, used by both CLI and Config (remains the same)
 #[derive(ValueEnum, Clone, Debug, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")] // Allows "always", "never" in TOML
+#[serde(rename_all = "lowercase")]
 enum CliSyncStrategy {
     Always,
     Never,
 }
 
-// Convert CLI/Config enum to internal DB enum
+// Convert CLI/Config enum to internal DB enum (remains the same)
 impl From<CliSyncStrategy> for SyncStrategy {
     fn from(cli_strategy: CliSyncStrategy) -> Self {
         match cli_strategy {
@@ -61,7 +62,7 @@ impl From<CliSyncStrategy> for SyncStrategy {
     }
 }
 
-// --- Command Line Argument Structure ---
+// --- Command Line Argument Structure --- (remains the same)
 
 /// Simple Key-Value Database Server
 #[derive(Parser, Debug)]
@@ -72,7 +73,7 @@ struct Args {
     config: Option<PathBuf>,
 
     /// Path to the database log file (overrides config)
-    #[arg(short = 'd', long, value_name = "FILE")] // Changed short arg to 'd'
+    #[arg(short = 'd', long, value_name = "FILE")]
     data_file: Option<PathBuf>,
 
     /// Path to the index snapshot file (overrides config)
@@ -89,7 +90,7 @@ struct Args {
 }
 
 
-// --- Main Application Logic ---
+// --- Main Application Logic --- (remains mostly the same, minor adjustments might be needed if Default was relied upon implicitly, but wasn't here)
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -107,10 +108,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // 2. Build configuration layers
     let config_builder = Config::builder()
         // Start with base defaults defined in the Settings struct defaults
+        // These provide the absolute fallback if nothing else is set
         .set_default("data_file", default_data_file().to_str().unwrap_or("data.dblog"))?
         .set_default("listen", default_listen_addr().to_string())?
         .set_default("sync", "never")?
-        // index_file has no simple default, handled later
+        // index_file default is calculated later based on data_file
         ;
 
     // 3. Add config file source if specified
@@ -129,7 +131,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     // 4. (Optional) Add environment variable source
-    // config_builder = config_builder.add_source(Environment::with_prefix("APP").separator("__"));
+    // config_builder = config_builder.add_source(config::Environment::with_prefix("APP").separator("__"));
 
     // 5. Finalize config build
     let cfg = match config_builder.build() {
