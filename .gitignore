@@ -1,0 +1,83 @@
+# Rust / Cargo build artifacts
+/target/
+Cargo.lock # Usually committed for applications, but commented out if you prefer not to
+
+# Runtime database files
+*.dblog
+*.dblog.index
+*.dblog.index.tmp # Temporary index file during snapshot save
+*.dblog.compacting # Temporary log file during compaction
+*.index.compacting # Temporary index file during compaction
+
+# Generated analysis/profiling files
+flamegraph.svg
+*.profraw
+*.lcov
+coverage/
+
+# General log files
+*.log
+
+# Operating System Files
+.DS_Store # macOS
+Thumbs.db # Windows
+ehthumbs.db # Windows
+desktop.ini # Windows
+*~ # Backup files (common on Linux/Unix)
+*.bak # Backup files
+*.swo # Vim swap file
+*.swp # Vim swap file
+*.swn # Vim swap file
+
+# IDE / Editor configuration files
+.vscode/ # VS Code
+.idea/ # JetBrains IDEs (IntelliJ, CLion, RustRover)
+*.sublime-project # Sublime Text
+*.sublime-workspace # Sublime Text
+*.suo # Visual Studio
+*.user # Visual Studio
+*.userosscache # Visual Studio
+*.sln.docstates # Visual Studio
+
+# Environment variables (often contain secrets)
+.env*
+!.env.example # Example env files are usually okay to commit
+
+# Windows specifics (less common in project root, but safe to include)
+[Dd]ebug/
+[Rr]elease/
+x64/
+*_i.c
+*_p.c
+*_h.h
+*.ilk
+*.meta
+*.obj
+*.pch
+*.pdb
+*.pgc
+*.pgd
+*.rsp
+*.sbr
+*.tlb
+*.tli
+*.tlh
+*.tmp
+*.tmp_proj
+*.vspscc
+*.vssscc
+.builds/
+vs*.suo
+*.vcxproj.user
+
+# Builds Tools (if used, e.g., for WASM or bindings)
+node_modules/
+*.wasm
+*.js
+
+# Miscellaneous
+*.orig # Diff/patch files
+
+# Comment out if you want to commit specific database files for testing/example purposes
+# !example.dblog
+# !example.dblog.index
