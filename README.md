@@ -21,17 +21,18 @@ While simple, it serves as a foundation and learning tool for understanding how 
     *   Administrative endpoints to manually trigger compaction and snapshotting.
 *   **Data Integrity:** Employs CRC32 checksums within each log record to help detect data corruption.
 *   **Concurrency Control:** Uses `std::sync::RwLock` to allow multiple concurrent reads or exclusive write access to the database state, ensuring thread safety.
+*   **Flexible Configuration:** Supports configuration via defaults, a TOML file (`config.toml`), and command-line arguments, with CLI arguments taking the highest precedence.
 *   **Configurable Sync Strategy:** Offers control over disk synchronization for write operations:
     *   `Always`: Performs `fsync` after every write for maximum durability (at the cost of performance).
     *   `Never`: Relies on the operating system's page cache for writes (faster, but risks data loss on system crash or power failure before data is flushed).
-*   **Command-Line Interface:** Simple CLI built with `clap` for configuring the server (file paths, listen address, sync strategy).
-*   **Testing:** Includes unit tests for database logic and integration tests for the API and CLI behavior.
+*   **Command-Line Interface:** Simple CLI built with `clap` for configuring the server (file paths, listen address, sync strategy, config file path).
+*   **Testing:** Includes unit tests for database logic and integration tests for the API and CLI behavior (including configuration layering).
 
 ## Getting Started
 
 ### Prerequisites
 
-*   **Rust:** Ensure you have a recent Rust toolchain installed (>= 1.56 for 2021 edition features). You can get it from [rustup.rs](https://rustup.rs/).
+*   **Rust:** Ensure you have a recent Rust toolchain installed (>= 1.70 recommended). You can get it from [rustup.rs](https://rustup.rs/).
 
 ### Building
 
@@ -52,24 +53,63 @@ While simple, it serves as a foundation and learning tool for understanding how 
 
 ### Running the Server
 
-You can run the server directly using `cargo run` (which compiles and runs) or by executing the compiled binary.
+You can run the server directly using `cargo run` (which compiles and runs) or by executing the compiled binary. Configuration can be provided via a TOML file and/or command-line arguments.
+
+**Configuration Precedence:**
+
+Settings are determined in the following order (later steps override earlier ones):
+1.  Internal Defaults (e.g., listen on `127.0.0.1:7878`, use `data.dblog`, `sync = never`).
+2.  Values from `config.toml` (if found in the current directory).
+3.  Values from a config file specified using the `--config <FILE>` argument (overrides `config.toml` if both are present).
+4.  Values provided directly via other command-line arguments (e.g., `--listen`, `--data-file`, `--sync`).
+
+**Example `config.toml`:**
+
+Create a file named `config.toml` in the directory where you run the server:
+
+```toml
+# Example config.toml for dead_simple_db
+
+# Optional: Specify the main data log file
+# data_file = "/var/db/my_app/data.dblog"
+
+# Optional: Specify the index file explicitly
+# If omitted, it defaults to data_file + .index
+# index_file = "/var/db/my_app/data.dblog.index"
+
+# Optional: Specify the listen address and port
+listen = "0.0.0.0:9000"
+
+# Optional: Specify the sync strategy ("always" or "never")
+sync = "always"
+```
+
+**Running Examples:**
 
 ```bash
-# Using cargo run (arguments after '--' are passed to the application)
-cargo run -- --data-file my_database.dblog --listen 127.0.0.1:8000 --sync never
+# Run with internal defaults (will look for config.toml optionally)
+./target/release/dead_simple_db
 
-# Using the release binary directly
-./target/release/dead_simple_db --data-file /var/db/dead_simple.dblog --index-file /var/db/dead_simple.index --sync always
+# Run using settings from ./config.toml (if it exists)
+./target/release/dead_simple_db
+
+# Specify a custom config file
+./target/release/dead_simple_db --config /etc/dead_simple_db.toml
+
+# Use cargo run and override listen address from config/defaults via CLI flag
+cargo run -- --listen 127.0.0.1:8000
+
+# Specify data file and sync strategy via CLI (overrides any config file settings for these)
+./target/release/dead_simple_db --data-file /var/db/app.dblog --sync always
 ```
 
 **Command-Line Options:**
 
-*   `--data-file <FILE>`: Path to the database log file where records are stored. (Default: `data.dblog` in the current directory).
-*   `--index-file <FILE>`: Path to the index snapshot file. If omitted, defaults to the data file path with `.index` appended (e.g., `data.dblog.index`).
-*   `--listen <IP:PORT>`: Network address and port for the HTTP API server to listen on. (Default: `127.0.0.1:7878`).
-*   `--sync <always|never>`: Specifies the disk synchronization strategy for writes.
-    *   `always`: Slower but safer. Ensures data is physically written to disk after each operation. Recommended for critical data.
-    *   `never`: Faster but risks data loss on crash. Lets the operating system handle flushing data to disk. Suitable for less critical data or when performance is paramount. (Default: `never`).
+*   `-c, --config <FILE>`: Path to a configuration file (TOML format).
+*   `-d, --data-file <FILE>`: Path to the database log file. Overrides config file setting. (Default: `data.dblog`).
+*   `--index-file <FILE>`: Path to the index snapshot file. Overrides config file setting. If omitted, defaults to data file path + `.index`.
+*   `-l, --listen <IP:PORT>`: Network address and port to listen on. Overrides config file setting. (Default: `127.0.0.1:7878`).
+*   `--sync <always|never>`: Write synchronization strategy. Overrides config file setting. (Default: `never`).
 *   `-h, --help`: Print help information and exit.
 *   `-V, --version`: Print version information and exit.
 
@@ -83,7 +123,7 @@ cargo test
 
 ## API Endpoints
 
-The following examples assume the server is running on the default `http://127.0.0.1:7878`.
+The following examples assume the server is running on the default `http://127.0.0.1:7878`. Adjust the address if you configured it differently.
 
 ---
 
@@ -303,7 +343,8 @@ The project is structured as a Rust library crate with a binary (`main.rs`) that
 *   **`main.rs`:**
     *   Entry point of the application.
     *   Parses command-line arguments using `clap`.
-    *   Initializes the `tracing` subscriber for logging.
+    *   Initializes `tracing` subscriber for logging.
+    *   Loads configuration from defaults, optional TOML file, and CLI arguments.
     *   Creates and manages the `SimpleDb` instance within an `Arc`.
     *   Sets up the Axum HTTP router using `api::create_router`.
     *   Binds the TCP listener and starts the Axum server.
@@ -330,7 +371,7 @@ The project is structured as a Rust library crate with a binary (`main.rs`) that
     *   Declares the public modules (`db`, `error`, `api`) making them available to the binary crate and external users if published.
 *   **`tests/`:**
     *   `api_integration.rs`: Contains tests that spawn a real server instance on a random port and use an HTTP client (`reqwest`) to verify API endpoint behavior.
-    *   `cli_integration.rs`: Contains tests that run the compiled binary as a separate process (`assert_cmd`) to verify command-line argument handling and basic server startup/shutdown.
+    *   `cli_integration.rs`: Contains tests that run the compiled binary as a separate process (`assert_cmd`) to verify command-line argument handling, configuration layering, and basic server startup/shutdown.
 
 ## Error Handling
 
@@ -364,21 +405,23 @@ This model allows high read concurrency while ensuring safety during write opera
 
 ## Future Improvements / Roadmap
 
-*   **Authentication/Authorization:** Implement API keys, JWT, or other mechanisms to secure the API, especially the `/admin` endpoints.
-*   **TLS/HTTPS Support:** Add configuration options (e.g., certificate/key paths) to enable encrypted communication using libraries like `tokio-rustls` or `hyper-tls`.
-*   **Transactions:** Explore adding support for atomic multi-key operations (e.g., compare-and-swap, atomic batch writes). This significantly increases complexity.
-*   **Configuration File:** Support loading configuration from a file (e.g., TOML) using crates like `config` or `serde`.
-*   **Automatic Compaction/Snapshotting:** Implement background tasks that trigger compaction or snapshotting based on configurable thresholds (e.g., log size, fragmentation percentage, time interval).
-*   **Memory Usage Optimization:** For very large datasets where the index exceeds available RAM, investigate options like:
-    *   Memory-mapped index files.
-    *   More memory-efficient index data structures (e.g., B-Trees persisted to disk).
-    *   Tiered storage approaches.
-*   **Streaming API:** Allow streaming large values for PUT and GET requests instead of requiring them to fit entirely in memory.
-*   **Replication:** Introduce primary/secondary replication for high availability or read scaling.
-*   **Enhanced Querying:** Consider support for range scans, prefix searches, or basic secondary indexing.
-*   **Rate Limiting:** Add middleware (e.g., using `tower-governor`) to prevent abuse.
-*   **Observability:** Integrate more detailed metrics (e.g., Prometheus) and distributed tracing capabilities.
+*   **Security:**
+    *   **Authentication/Authorization:** Implement API keys, JWT, or other mechanisms to secure the API, especially the `/admin` endpoints.
+    *   **TLS/HTTPS Support:** Add configuration options (e.g., certificate/key paths) to enable encrypted communication using libraries like `axum-server` or `tokio-rustls`.
+*   **Operational:**
+    *   **Automatic Compaction/Snapshotting:** Implement background tasks that trigger compaction or snapshotting based on configurable thresholds (e.g., log size, time interval).
+    *   **Enhanced Logging:** Add configuration for log level and file output.
+    *   **Metrics:** Integrate Prometheus or similar for exposing operational metrics.
+    *   **Rate Limiting:** Add middleware (e.g., using `tower-governor`) to prevent abuse.
+*   **Core Features:**
+    *   **Transactions:** Explore adding support for atomic multi-key operations (e.g., compare-and-swap).
+    *   **Memory Usage Optimization:** Investigate options for handling datasets larger than RAM (e.g., disk-based B-Trees, memory-mapped index).
+    *   **Streaming API:** Allow streaming large values for PUT and GET requests.
+    *   **Replication:** Introduce primary/secondary replication for high availability or read scaling.
+    *   **Enhanced Querying:** Consider support for range scans, prefix searches, or basic secondary indexing.
+    *   **Configurable Limits:** Allow key/value size limits to be set via configuration.
+*   **Observability:** Integrate distributed tracing capabilities.
 
 ## License
 
-This project is currently unlicensed. Please add a license file (e.g., MIT, Apache-2.0) if you intend to distribute or share it.
+This project is licensed under the MIT License. See the `LICENSE` file for details.
