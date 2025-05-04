@@ -1,17 +1,22 @@
 use thiserror::Error;
+use bincode; // Import the crate itself
 
 #[derive(Debug, Error)]
 pub enum DbError {
     #[error("I/O Error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Serialization Error (bincode): {0}")]
-    BincodeSerializaton(#[from] bincode::Error), // For index snapshotting
+    // --- Updated Bincode Errors ---
+    #[error("Serialization Error (Bincode Encode): {0}")]
+    BincodeEncode(#[from] Box<bincode::error::EncodeError>), // Boxed encode error
+
+    #[error("Deserialization Error (Bincode Decode): {0}")]
+    BincodeDecode(#[from] Box<bincode::error::DecodeError>), // Boxed decode error
+    // --- End Updated Bincode Errors ---
 
     #[error("Serialization Error (JSON): {0}")]
-    JsonSerialization(#[from] serde_json::Error), // Keep if JSON specifics needed elsewhere
+    JsonSerialization(#[from] serde_json::Error),
 
-    // Keep generic strings for cases where source isn't easily available
     #[error("Failed to serialize record: {0}")]
     Serialization(String),
 
@@ -37,7 +42,7 @@ pub enum DbError {
     LockPoisoned(String),
 
     #[error("Database file format version mismatch")]
-    VersionMismatch, // Example for future use
+    VersionMismatch,
 
     #[error("Configuration Error: {0}")]
     Config(String),

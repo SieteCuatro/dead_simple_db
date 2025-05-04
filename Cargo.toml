@@ -1,33 +1,31 @@
+# Cargo.toml
+
 [package]
 name = "dead_simple_db"
 version = "0.1.0"
-edition = "2021" # Use 2021 edition
-license = "MIT" 
+edition = "2021"
+license = "MIT"
 
 [dependencies]
-axum = "0.7.5"
-bytes = "1.6.0"
-clap = { version = "4.5.4", features = ["derive"] }
+axum = "0.8.4"              # Updated from ^0.7.5
+bytes = "1.10.1"            # Already up-to-date technically, but pinning to latest lock version
+clap = { version = "4.5.37", features = ["derive"] } # Updated from 4.5.4
 crc = "3.2.1"
-# Ensure serde derive feature is enabled (it was already)
-serde = { version = "1.0.203", features = ["derive"] }
-serde_json = "1.0.117"
-thiserror = "1.0.61"
-tokio = { version = "1.38.0", features = ["full"] }
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["fmt"] }
-# tower = "0.4.13" # Keep as is for now, address tower 0.5 separately if needed
-bincode = "1.3.3"
-once_cell = "1.19.0"
-nix = "0.29.0"
-# --- Add config crate ---
-config = { version = "0.14", features = ["toml"] } # Add config with TOML support
+serde = { version = "1.0.219", features = ["derive"] } # Updated from 1.0.203
+serde_json = "1.0.140"       # Updated from 1.0.117
+thiserror = "2.0.12"         # Updated from ^1.0.61 (Major Version Bump!)
+tokio = { version = "1.44.2", features = ["full"] } # Updated from 1.38.0
+tracing = "0.1.41"           # Updated from 0.1.40
+tracing-subscriber = { version = "0.3.19", features = ["fmt"] } # Updated from 0.3.18
+bincode = "2.0.1"            # Updated from ^1.3.3 (Major Version Bump!)
+once_cell = "1.21.3"         # Updated from 1.19.0
+nix = "0.30.0"               # Updated from ^0.29.0
+config = { version = "0.15.11", features = ["toml"] } # Updated from ^0.14
 
 [dev-dependencies]
-tempfile = "3.10.1"
-reqwest = { version = "0.12.5", features = ["json", "blocking"] }
-assert_cmd = "2.0.14"
-predicates = "3.1.0"
-nix = { version = "0.29.0", features = ["signal"] }
-
-# tower-http = { version = "0.5.2", features = ["fs", "trace", "cors"] }
+tempfile = "3.19.1"          # Updated from 3.10.1
+reqwest = { version = "0.12.15", features = ["json", "blocking"] } # Updated from 0.12.5
+assert_cmd = "2.0.17"        # Updated from 2.0.14
+predicates = "3.1.3"         # Updated from 3.1.0
+# nix is updated via main dependencies section now
+# nix = { version = "0.29.0", features = ["signal"] } # Remove duplicate dev dep if desired
