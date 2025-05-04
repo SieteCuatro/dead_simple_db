@@ -9,10 +9,10 @@ use axum::{
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn}; // Added warn back
+use tracing::{debug, error, info, warn};
 
 use crate::db::SimpleDb;
-use crate::error::DbError; // Keep this specific import
+use crate::error::DbError;
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -31,7 +31,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
             ApiError::BadRequest(msg) => {
-                warn!("Bad request: {}", msg); // Re-added warn usage
+                warn!("Bad request: {}", msg);
                 (StatusCode::BAD_REQUEST, msg)
             }
             ApiError::Internal(msg) => {
@@ -42,7 +42,7 @@ impl IntoResponse for ApiError {
                 match db_err {
                     DbError::KeyNotFound => (StatusCode::NOT_FOUND, "Key not found".to_string()),
                     DbError::KeyTooLarge { .. } | DbError::ValueTooLarge { .. } => {
-                        warn!("Payload too large: {}", db_err); // Re-added warn usage
+                        warn!("Payload too large: {}", db_err);
                         (StatusCode::PAYLOAD_TOO_LARGE, db_err.to_string())
                     }
                     DbError::Io(ref io_err) => {
@@ -81,11 +81,12 @@ impl IntoResponse for ApiError {
         };
 
         let body = Json(serde_json::json!({ "error": error_message }));
+        // Ensure correct Response construction
         Response::builder()
             .status(status)
             .header(header::CONTENT_TYPE, "application/json")
-            .body(body.into_response().into_body())
-            .unwrap()
+            .body(body.into_response().into_body()) // Convert Json response body
+            .unwrap() // Should not fail if status/headers are valid
     }
 }
 
@@ -266,7 +267,9 @@ pub async fn trigger_save_snapshot(State(db): State<Arc<SimpleDb>>) -> ApiResult
 pub fn create_router(db: Arc<SimpleDb>) -> Router {
     Router::new()
         .route(
-            "/keys/:key",
+            // --- UPDATED PATH SYNTAX ---
+            "/keys/{key}", // Use curly braces instead of colon
+            // --------------------------
             get(get_key).put(put_key).delete(delete_key),
         )
         .route("/keys/batch", post(batch_put))
