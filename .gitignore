@@ -1,6 +1,6 @@
 # Rust / Cargo build artifacts
 /target/
-Cargo.lock # Usually committed for applications, but commented out if you prefer not to
+Cargo.lock
 
 # Runtime database files
 *.dblog

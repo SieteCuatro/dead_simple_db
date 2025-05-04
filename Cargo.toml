@@ -16,11 +16,16 @@ tracing = "0.1.40" # Update tracing potentially
 tracing-subscriber = { version = "0.3.18", features = ["fmt"] } # Update tracing-subscriber potentially
 tower = "0.4.13" # tower 0.5 has breaking changes, using 0.4 as per original lock or update API carefully
 bincode = "1.3.3" # Added for index serialization
+once_cell = "1.19.0" # Potentially useful for global test setup (like tracing init)
+
+[dev-dependencies]
 tempfile = "3.10.1"       # For creating temporary files/dirs during tests
 reqwest = { version = "0.12.5", features = ["json", "blocking"] } # Add "blocking" here
 assert_cmd = "2.0.14"     # For testing the command-line executable behaviour
 predicates = "3.1.0"    # Used with assert_cmd for assertions on output
-once_cell = "1.19.0"    # Potentially useful for global test setup (like tracing init)
+# --- Add nix here ---
+nix = { version = "0.29.0", features = ["signal"] } # Added for sending signals in tests (like SIGINT)
+
 
 # Ensure tower-http is compatible if needed for future features like CORS
 # tower-http = { version = "0.5.2", features = ["fs", "trace", "cors"] }
