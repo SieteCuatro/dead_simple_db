@@ -37,3 +37,22 @@
 # If commented out or omitted, it defaults to "never".
 # sync = "always"
 sync = "never"
+
+# --- Automatic Maintenance ---
+
+# Optional: Automatically trigger log compaction when the log file exceeds this size in bytes.
+# Set to 0 to disable automatic compaction based on size.
+# Example: 1073741824 = 1 GiB
+# auto_compact_threshold_bytes = 1073741824
+auto_compact_threshold_bytes = 0 # Disabled by default
+
+# Optional: Automatically trigger index snapshotting at this interval in seconds.
+# Set to 0 to disable time-based automatic snapshotting.
+# Example: 3600 = 1 hour
+# auto_snapshot_interval_secs = 3600
+auto_snapshot_interval_secs = 0 # Disabled by default
+
+# Optional: Interval in seconds for checking maintenance conditions.
+# How often the background task wakes up to check log size / snapshot time.
+# (Defaults to 60 seconds in the code if not set here or via CLI)
+# maintenance_check_interval_secs = 60

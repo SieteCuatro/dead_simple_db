@@ -1,12 +1,14 @@
-use clap::{Parser, ValueEnum}; // Corrected import path for ValueSource
+use clap::{Parser, ValueEnum};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{error, info, Level}; // Removed unused `warn`
+use tracing::{error, info, Level, warn}; // Added warn
 use std::error::Error;
 use std::process;
-use config::{Config, ConfigError, File}; // Removed unused `Environment`
+use config::{Config, ConfigError, File}; // Added ConfigValue
 use serde::Deserialize;
+use tokio::time::Duration;
 
 // Use the library crate name
 use dead_simple_db::{api, error, db::{SimpleDb, SyncStrategy}};
@@ -19,41 +21,37 @@ use dead_simple_db::error::DbError;
 // --- Configuration Structures ---
 
 // Structure for config file values
-// Removed Default derive as SocketAddr and CliSyncStrategy don't implement it
 #[derive(Deserialize, Debug)]
 struct Settings {
     #[serde(default = "default_data_file")]
     data_file: PathBuf,
-    index_file: Option<PathBuf>, // Make index_file optional in config
+    index_file: Option<PathBuf>,
     #[serde(default = "default_listen_addr")]
     listen: SocketAddr,
     #[serde(default = "default_sync_strategy")]
     sync: CliSyncStrategy,
+    #[serde(default = "default_auto_compact_threshold")]
+    auto_compact_threshold_bytes: u64,
+    #[serde(default = "default_auto_snapshot_interval")]
+    auto_snapshot_interval_secs: u64,
+    #[serde(default = "default_maintenance_check_interval")]
+    maintenance_check_interval_secs: u64,
 }
 
-// Default value functions for Settings (remain the same)
-fn default_data_file() -> PathBuf {
-    PathBuf::from("data.dblog")
-}
+// Default value functions for Settings
+fn default_data_file() -> PathBuf { PathBuf::from("data.dblog") }
+fn default_listen_addr() -> SocketAddr { "127.0.0.1:7878".parse().expect("Default listen address should be valid") }
+fn default_sync_strategy() -> CliSyncStrategy { CliSyncStrategy::Never }
+fn default_auto_compact_threshold() -> u64 { 0 } // Disabled by default
+fn default_auto_snapshot_interval() -> u64 { 0 } // Disabled by default
+fn default_maintenance_check_interval() -> u64 { 60 } // Check every 60 seconds
 
-fn default_listen_addr() -> SocketAddr {
-    "127.0.0.1:7878".parse().expect("Default listen address should be valid")
-}
-
-fn default_sync_strategy() -> CliSyncStrategy {
-    CliSyncStrategy::Never
-}
-
-// Enum for Sync Strategy, used by both CLI and Config (remains the same)
+// Enum for Sync Strategy (remains the same)
 #[derive(ValueEnum, Clone, Debug, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum CliSyncStrategy {
-    Always,
-    Never,
-}
+enum CliSyncStrategy { Always, Never }
 
-// Convert CLI/Config enum to internal DB enum (remains the same)
-impl From<CliSyncStrategy> for SyncStrategy {
+impl From<CliSyncStrategy> for SyncStrategy { // (remains the same)
     fn from(cli_strategy: CliSyncStrategy) -> Self {
         match cli_strategy {
             CliSyncStrategy::Always => SyncStrategy::Always,
@@ -62,8 +60,7 @@ impl From<CliSyncStrategy> for SyncStrategy {
     }
 }
 
-// --- Command Line Argument Structure --- (remains the same)
-
+// --- Command Line Argument Structure ---
 /// Simple Key-Value Database Server
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -87,10 +84,22 @@ struct Args {
     /// Write synchronization strategy (overrides config)
     #[arg(long, value_enum)]
     sync: Option<CliSyncStrategy>,
+
+    /// Automatic compaction threshold in bytes (0 to disable) (overrides config)
+    #[arg(long, value_name = "BYTES")]
+    auto_compact_threshold_bytes: Option<u64>,
+
+    /// Automatic snapshot interval in seconds (0 to disable) (overrides config)
+    #[arg(long, value_name = "SECONDS")]
+    auto_snapshot_interval_secs: Option<u64>,
+
+    /// Maintenance check interval in seconds (overrides config)
+    #[arg(long, value_name = "SECONDS")]
+    maintenance_check_interval_secs: Option<u64>,
 }
 
 
-// --- Main Application Logic --- (remains mostly the same, minor adjustments might be needed if Default was relied upon implicitly, but wasn't here)
+// --- Main Application Logic ---
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -101,77 +110,68 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .init();
 
     // --- Configuration Loading ---
-
-    // 1. Parse CLI args *first* to potentially get config path
     let args = Args::parse();
 
-    // 2. Build configuration layers
+    // Build configuration layers
     let config_builder = Config::builder()
-        // Start with base defaults defined in the Settings struct defaults
-        // These provide the absolute fallback if nothing else is set
         .set_default("data_file", default_data_file().to_str().unwrap_or("data.dblog"))?
         .set_default("listen", default_listen_addr().to_string())?
         .set_default("sync", "never")?
-        // index_file default is calculated later based on data_file
-        ;
+        // Set defaults for new maintenance options
+        .set_default("auto_compact_threshold_bytes", default_auto_compact_threshold() as i64)? // config crate uses i64 for numbers internally
+        .set_default("auto_snapshot_interval_secs", default_auto_snapshot_interval() as i64)?
+        .set_default("maintenance_check_interval_secs", default_maintenance_check_interval() as i64)?;
 
-    // 3. Add config file source if specified
+    // Add config file source if specified
     let config_builder = match &args.config {
         Some(config_path) => {
             info!("Attempting to load configuration from: {:?}", config_path);
-            // Make it required=true ONLY if the --config flag was explicitly provided
             let required = args.config.is_some();
              config_builder.add_source(File::from(config_path.clone()).required(required))
         }
         None => {
-            // Try loading a default config file name (e.g., config.toml) optionally
             info!("No --config specified, attempting to load 'config.toml' optionally");
             config_builder.add_source(File::with_name("config").required(false))
         }
     };
 
-    // 4. (Optional) Add environment variable source
-    // config_builder = config_builder.add_source(config::Environment::with_prefix("APP").separator("__"));
-
-    // 5. Finalize config build
+    // Finalize config build (error handling remains the same)
     let cfg = match config_builder.build() {
          Ok(c) => c,
          Err(e) => {
-             // Handle specific errors like file not found vs parsing errors
              match e {
                  ConfigError::FileParse { uri, cause } => {
                      error!("Error parsing configuration file {:?}: {}", uri.unwrap_or_else(|| "Unknown".to_string()), cause);
                      eprintln!("Error: Failed to parse configuration file. Please check the format.");
-                     process::exit(1); // Exit on parse error
+                     process::exit(1);
                  }
                  ConfigError::NotFound(path) if args.config.is_some() => {
-                      // Only error if --config was EXPLICITLY provided and file not found
-                      error!("Configuration file specified but not found: {}", path);
-                      eprintln!("Error: Configuration file specified via --config was not found: {}", path);
-                      process::exit(1); // Exit if specified config is missing
+                     error!("Configuration file specified but not found: {}", path);
+                     eprintln!("Error: Configuration file specified via --config was not found: {}", path);
+                     process::exit(1);
                  }
                  ConfigError::NotFound(_) => {
-                     // Ignore if default config file wasn't found
                      info!("Default configuration file not found, using defaults and CLI arguments.");
                  }
                  _ => {
-                     // Other errors (e.g., type mismatches)
                      error!("Error loading configuration: {}", e);
                      eprintln!("Error: Could not load configuration: {}", e);
-                     process::exit(1); // Exit on other config errors
+                     process::exit(1);
                  }
              }
-             // If we ignored NotFound for default file, build minimal defaults
-             Config::builder()
+             // Build minimal defaults if config load failed non-critically
+              Config::builder()
                  .set_default("data_file", default_data_file().to_str().unwrap_or("data.dblog"))?
                  .set_default("listen", default_listen_addr().to_string())?
                  .set_default("sync", "never")?
+                 .set_default("auto_compact_threshold_bytes", default_auto_compact_threshold() as i64)?
+                 .set_default("auto_snapshot_interval_secs", default_auto_snapshot_interval() as i64)?
+                 .set_default("maintenance_check_interval_secs", default_maintenance_check_interval() as i64)?
                  .build()?
          }
     };
 
-
-    // 6. Deserialize base settings from config object
+    // Deserialize base settings
     let base_settings: Settings = match cfg.try_deserialize() {
          Ok(s) => s,
          Err(e) => {
@@ -183,19 +183,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 
     // --- Merging CLI arguments over Config/Defaults ---
-
-    // Determine final values, prioritizing CLI flags if they were explicitly provided
     let final_data_file = args.data_file.clone().unwrap_or(base_settings.data_file);
-
-    // Special handling for index_file: default depends on data_file
     let final_index_file = args.index_file.clone()
-        .or(base_settings.index_file) // Use config value if present
-        .unwrap_or_else(|| final_data_file.with_extension("dblog.index")); // Calculate default based on final data_file
-
+        .or(base_settings.index_file)
+        .unwrap_or_else(|| final_data_file.with_extension("dblog.index"));
     let final_listen_addr = args.listen.unwrap_or(base_settings.listen);
-    let final_sync_strategy_cli = args.sync.unwrap_or(base_settings.sync);
-    let final_sync_strategy: SyncStrategy = final_sync_strategy_cli.into(); // Convert to internal type
-
+    let final_sync_strategy: SyncStrategy = args.sync.unwrap_or(base_settings.sync).into();
+    let final_auto_compact_threshold = args.auto_compact_threshold_bytes.unwrap_or(base_settings.auto_compact_threshold_bytes);
+    let final_auto_snapshot_interval_secs = args.auto_snapshot_interval_secs.unwrap_or(base_settings.auto_snapshot_interval_secs);
+    let final_maintenance_check_interval_secs = args.maintenance_check_interval_secs.unwrap_or(base_settings.maintenance_check_interval_secs);
 
     // --- Log final configuration ---
     info!("--- Final Configuration ---");
@@ -203,10 +199,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     info!("Index file: {:?}", final_index_file);
     info!("Listen address: {}", final_listen_addr);
     info!("Sync strategy: {:?}", final_sync_strategy);
+    info!("Auto Compact Threshold: {} bytes (0=disabled)", final_auto_compact_threshold);
+    info!("Auto Snapshot Interval: {} seconds (0=disabled)", final_auto_snapshot_interval_secs);
+    info!("Maintenance Check Interval: {} seconds", final_maintenance_check_interval_secs);
     info!("---------------------------");
 
-
-    // --- Database Initialization (using final config values) ---
+    // --- Database Initialization ---
     if let Some(parent) = final_data_file.parent() {
         if !parent.exists() {
             info!("Creating data directory: {:?}", parent);
@@ -223,20 +221,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let db = match SimpleDb::open(&final_data_file, &final_index_file, final_sync_strategy) {
         Ok(db_instance) => Arc::new(db_instance),
         Err(e) => {
-            error!("Failed to open database: {}", e);
-            match e {
-                 error::DbError::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied => {
-                     eprintln!("Error: Permission denied accessing database files ({:?} or {:?}). Please check file/directory permissions.", final_data_file, final_index_file);
-                 }
-                 _ => {
-                      eprintln!("Error: Could not initialize database: {}", e);
-                 }
-            }
-            process::exit(1);
+           error!("Failed to open database: {}", e);
+           match e {
+                error::DbError::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied => {
+                    eprintln!("Error: Permission denied accessing database files ({:?} or {:?}). Please check file/directory permissions.", final_data_file, final_index_file);
+                }
+                _ => {
+                     eprintln!("Error: Could not initialize database: {}", e);
+                }
+           }
+           process::exit(1);
         }
     };
     info!("Database opened successfully.");
 
+    // --- Spawn Maintenance Task ---
+    if final_auto_compact_threshold > 0 || final_auto_snapshot_interval_secs > 0 {
+        if final_maintenance_check_interval_secs == 0 {
+            warn!("Automatic maintenance enabled but check interval is 0, disabling checks.");
+        } else {
+            info!("Spawning background maintenance task.");
+            spawn_maintenance_task(
+                db.clone(),
+                final_auto_compact_threshold,
+                final_auto_snapshot_interval_secs,
+                final_maintenance_check_interval_secs,
+            );
+        }
+    } else {
+        info!("Automatic maintenance disabled by configuration.");
+    }
 
     // --- API Router Setup ---
     let app = api::create_router(db.clone());
@@ -280,4 +294,117 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     info!("Shutdown complete.");
     Ok(())
+}
+
+// --- Maintenance Task ---
+
+fn spawn_maintenance_task(
+    db: Arc<SimpleDb>,
+    compact_threshold_bytes: u64,
+    snapshot_interval_secs: u64,
+    check_interval_secs: u64,
+) {
+    // Flags to prevent concurrent runs of the *same* maintenance type
+    let is_compacting = Arc::new(AtomicBool::new(false));
+    let is_snapshotting = Arc::new(AtomicBool::new(false));
+
+    tokio::spawn(async move {
+        if check_interval_secs == 0 { return; } // Prevent division by zero / useless loop
+
+        let mut interval = tokio::time::interval(Duration::from_secs(check_interval_secs));
+        // Wait one interval before the first check
+        interval.tick().await;
+
+        info!("Maintenance task started. Check interval: {}s", check_interval_secs);
+
+        loop {
+            interval.tick().await;
+            tracing::debug!("Maintenance check running..."); // Use tracing::debug
+
+            // --- Check Compaction ---
+            if compact_threshold_bytes > 0 {
+                // Check if already compacting
+                if !is_compacting.load(Ordering::SeqCst) {
+                    match db.get_log_size_for_compaction_check() {
+                        Ok(current_size) => {
+                            if current_size >= compact_threshold_bytes {
+                                info!("Log size {} >= threshold {}, triggering compaction.", current_size, compact_threshold_bytes);
+                                // Set flag *before* spawning task
+                                if is_compacting.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                                    let db_clone = db.clone();
+                                    let flag_clone = is_compacting.clone();
+                                    tokio::spawn(async move {
+                                        info!("Starting background compaction...");
+                                        match db_clone.compact() { // Assuming compact remains sync for now
+                                            Ok(_) => info!("Background compaction finished successfully."),
+                                            Err(e) => error!("Background compaction failed: {}", e),
+                                        }
+                                        // Always reset the flag
+                                        flag_clone.store(false, Ordering::SeqCst);
+                                    });
+                                } else {
+                                   tracing::debug!("Compaction already in progress, skipping trigger."); // Use tracing::debug
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to get log size for compaction check: {}", e);
+                        }
+                    }
+                } else {
+                     tracing::debug!("Compaction already running, skipping check."); // Use tracing::debug
+                }
+            }
+
+            // --- Check Snapshotting ---
+            if snapshot_interval_secs > 0 {
+                // Check if already snapshotting
+                if !is_snapshotting.load(Ordering::SeqCst) {
+                    match db.get_last_snapshot_time().await {
+                        Some(last_time) => {
+                            if last_time.elapsed() >= Duration::from_secs(snapshot_interval_secs) {
+                                info!("Snapshot interval exceeded ({}s elapsed >= {}s threshold), triggering snapshot.", last_time.elapsed().as_secs(), snapshot_interval_secs);
+                                // Set flag *before* spawning task
+                                if is_snapshotting.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                                    let db_clone = db.clone();
+                                    let flag_clone = is_snapshotting.clone();
+                                    tokio::spawn(async move {
+                                        info!("Starting background snapshot...");
+                                        match db_clone.save_index_snapshot() { // save_index_snapshot is sync now, but keep spawn pattern
+                                            Ok(_) => info!("Background snapshot finished successfully."),
+                                            Err(e) => error!("Background snapshot failed: {}", e),
+                                        }
+                                        // Always reset the flag
+                                        flag_clone.store(false, Ordering::SeqCst);
+                                    });
+                                } else {
+                                   tracing::debug!("Snapshot already in progress, skipping trigger."); // Use tracing::debug
+                                }
+                            }
+                        }
+                        None => {
+                            // No snapshot taken yet, trigger one immediately if interval > 0
+                             info!("No previous snapshot time recorded, triggering initial snapshot.");
+                             if is_snapshotting.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                                 let db_clone = db.clone();
+                                 let flag_clone = is_snapshotting.clone();
+                                 tokio::spawn(async move {
+                                     info!("Starting background initial snapshot...");
+                                     match db_clone.save_index_snapshot() {
+                                         Ok(_) => info!("Background initial snapshot finished successfully."),
+                                         Err(e) => error!("Background initial snapshot failed: {}", e),
+                                     }
+                                     flag_clone.store(false, Ordering::SeqCst);
+                                 });
+                             } else {
+                                tracing::debug!("Snapshot already in progress, skipping initial trigger."); // Use tracing::debug
+                             }
+                        }
+                    }
+                } else {
+                    tracing::debug!("Snapshot already running, skipping check."); // Use tracing::debug
+                }
+            }
+        }
+    });
 }
