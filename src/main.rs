@@ -1,21 +1,27 @@
+// src/main.rs
+
 use clap::{Parser, ValueEnum};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{error, info, Level, warn}; // Added warn
+// --- Change Level import if needed, or just use it directly ---
+use tracing::{debug, error, info, Level, warn}; // Ensure Level is imported if not already
 use std::error::Error;
 use std::process;
-use config::{Config, ConfigError, File}; // Added ConfigValue
+use config::{Config, ConfigError, File};
 use serde::Deserialize;
 use tokio::time::Duration;
 
 // Use the library crate name
 use dead_simple_db::{api, error, db::{SimpleDb, SyncStrategy}};
 
-// Keep DbError import if used directly, otherwise allow unused
 #[allow(unused_imports)]
 use dead_simple_db::error::DbError;
+
+// --- Import TraceLayer ---
+use tower_http::trace::TraceLayer;
+// -------------------------
 
 
 // --- Configuration Structures ---
@@ -104,10 +110,13 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // Initialize tracing subscriber (early)
+    // --- MODIFIED LOG LEVEL ---
     tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_target(true)
+        .with_max_level(Level::DEBUG) // Changed from INFO to DEBUG
+        .with_target(true) // Keep target info
+        // .with_line_number(true) // Optional: Add line numbers for debugging
         .init();
+    // --------------------------
 
     // --- Configuration Loading ---
     let args = Args::parse();
@@ -117,8 +126,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .set_default("data_file", default_data_file().to_str().unwrap_or("data.dblog"))?
         .set_default("listen", default_listen_addr().to_string())?
         .set_default("sync", "never")?
-        // Set defaults for new maintenance options
-        .set_default("auto_compact_threshold_bytes", default_auto_compact_threshold() as i64)? // config crate uses i64 for numbers internally
+        .set_default("auto_compact_threshold_bytes", default_auto_compact_threshold() as i64)?
         .set_default("auto_snapshot_interval_secs", default_auto_snapshot_interval() as i64)?
         .set_default("maintenance_check_interval_secs", default_maintenance_check_interval() as i64)?;
 
@@ -135,7 +143,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    // Finalize config build (error handling remains the same)
+    // Finalize config build
     let cfg = match config_builder.build() {
          Ok(c) => c,
          Err(e) => {
@@ -151,7 +159,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                      process::exit(1);
                  }
                  ConfigError::NotFound(_) => {
-                     info!("Default configuration file not found, using defaults and CLI arguments.");
+                     // This is okay if config file is optional
+                     debug!("Optional default configuration file 'config.toml' not found.");
                  }
                  _ => {
                      error!("Error loading configuration: {}", e);
@@ -194,15 +203,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let final_maintenance_check_interval_secs = args.maintenance_check_interval_secs.unwrap_or(base_settings.maintenance_check_interval_secs);
 
     // --- Log final configuration ---
-    info!("--- Final Configuration ---");
-    info!("Data file: {:?}", final_data_file);
-    info!("Index file: {:?}", final_index_file);
-    info!("Listen address: {}", final_listen_addr);
-    info!("Sync strategy: {:?}", final_sync_strategy);
-    info!("Auto Compact Threshold: {} bytes (0=disabled)", final_auto_compact_threshold);
-    info!("Auto Snapshot Interval: {} seconds (0=disabled)", final_auto_snapshot_interval_secs);
-    info!("Maintenance Check Interval: {} seconds", final_maintenance_check_interval_secs);
-    info!("---------------------------");
+    // Use debug! for detailed config logging now that DEBUG level is enabled
+    debug!("--- Final Configuration ---");
+    debug!("Data file: {:?}", final_data_file);
+    debug!("Index file: {:?}", final_index_file);
+    debug!("Listen address: {}", final_listen_addr);
+    debug!("Sync strategy: {:?}", final_sync_strategy);
+    debug!("Auto Compact Threshold: {} bytes (0=disabled)", final_auto_compact_threshold);
+    debug!("Auto Snapshot Interval: {} seconds (0=disabled)", final_auto_snapshot_interval_secs);
+    debug!("Maintenance Check Interval: {} seconds", final_maintenance_check_interval_secs);
+    debug!("---------------------------");
 
     // --- Database Initialization ---
     if let Some(parent) = final_data_file.parent() {
@@ -253,7 +263,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // --- API Router Setup ---
-    let app = api::create_router(db.clone());
+    let router = api::create_router(db.clone());
+
+    // --- Apply TraceLayer ---
+    let app = router.layer(TraceLayer::new_for_http());
+    // ------------------------
 
     // --- Start Server ---
     let listener = match tokio::net::TcpListener::bind(final_listen_addr).await {
@@ -275,6 +289,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         info!("Received CTRL+C, initiating graceful shutdown...");
     };
 
+    // --- Use the layered app ---
     axum::serve(listener, app.into_make_service())
         .with_graceful_shutdown(shutdown_signal)
         .await
@@ -282,6 +297,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
              error!("Server error: {}", e);
              Box::new(e) as Box<dyn Error>
         })?;
+    // ---------------------------
 
     // --- Perform final actions before exiting ---
     info!("Server shut down gracefully. Performing final sync/cleanup...");
@@ -319,7 +335,7 @@ fn spawn_maintenance_task(
 
         loop {
             interval.tick().await;
-            tracing::debug!("Maintenance check running..."); // Use tracing::debug
+            debug!("Maintenance check running..."); // Use debug here
 
             // --- Check Compaction ---
             if compact_threshold_bytes > 0 {
@@ -335,7 +351,7 @@ fn spawn_maintenance_task(
                                     let flag_clone = is_compacting.clone();
                                     tokio::spawn(async move {
                                         info!("Starting background compaction...");
-                                        match db_clone.compact() { // Assuming compact remains sync for now
+                                        match db_clone.compact() {
                                             Ok(_) => info!("Background compaction finished successfully."),
                                             Err(e) => error!("Background compaction failed: {}", e),
                                         }
@@ -343,7 +359,7 @@ fn spawn_maintenance_task(
                                         flag_clone.store(false, Ordering::SeqCst);
                                     });
                                 } else {
-                                   tracing::debug!("Compaction already in progress, skipping trigger."); // Use tracing::debug
+                                   debug!("Compaction already in progress, skipping trigger."); // Use debug
                                 }
                             }
                         }
@@ -352,7 +368,7 @@ fn spawn_maintenance_task(
                         }
                     }
                 } else {
-                     tracing::debug!("Compaction already running, skipping check."); // Use tracing::debug
+                     debug!("Compaction already running, skipping check."); // Use debug
                 }
             }
 
@@ -370,7 +386,7 @@ fn spawn_maintenance_task(
                                     let flag_clone = is_snapshotting.clone();
                                     tokio::spawn(async move {
                                         info!("Starting background snapshot...");
-                                        match db_clone.save_index_snapshot() { // save_index_snapshot is sync now, but keep spawn pattern
+                                        match db_clone.save_index_snapshot() {
                                             Ok(_) => info!("Background snapshot finished successfully."),
                                             Err(e) => error!("Background snapshot failed: {}", e),
                                         }
@@ -378,7 +394,7 @@ fn spawn_maintenance_task(
                                         flag_clone.store(false, Ordering::SeqCst);
                                     });
                                 } else {
-                                   tracing::debug!("Snapshot already in progress, skipping trigger."); // Use tracing::debug
+                                   debug!("Snapshot already in progress, skipping trigger."); // Use debug
                                 }
                             }
                         }
@@ -397,12 +413,12 @@ fn spawn_maintenance_task(
                                      flag_clone.store(false, Ordering::SeqCst);
                                  });
                              } else {
-                                tracing::debug!("Snapshot already in progress, skipping initial trigger."); // Use tracing::debug
+                                debug!("Snapshot already in progress, skipping initial trigger."); // Use debug
                              }
                         }
                     }
                 } else {
-                    tracing::debug!("Snapshot already running, skipping check."); // Use tracing::debug
+                    debug!("Snapshot already running, skipping check."); // Use debug
                 }
             }
         }

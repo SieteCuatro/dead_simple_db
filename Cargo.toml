@@ -21,6 +21,7 @@ bincode = "2.0.1"            # Updated from ^1.3.3 (Major Version Bump!)
 once_cell = "1.21.3"         # Updated from 1.19.0
 nix = { version = "0.30.0", features = ["signal"] } # Updated from ^0.29.0 without features
 config = { version = "0.15.11", features = ["toml"] } # Updated from ^0.14
+tower-http = { version = "0.6.0", features = ["trace", "fs"] } # Using a recent compatible version, add 'trace' feature. 'fs' might already be needed by Axum.
 
 [dev-dependencies]
 tempfile = "3.19.1"          # Updated from 3.10.1
