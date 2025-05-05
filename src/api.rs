@@ -10,7 +10,7 @@ use axum::{
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, warn}; // <-- ensure debug is imported
 
 use crate::db::SimpleDb;
 use crate::error::DbError;
@@ -70,7 +70,16 @@ impl IntoResponse for ApiError {
                          error!("Internal Server Error (Snapshot): {}", msg);
                          (StatusCode::INTERNAL_SERVER_ERROR, "Database state error".to_string())
                      }
-                    _ => {
+                     // Include the InvalidRecord case if it wasn't added before
+                     DbError::InvalidRecord { offset, reason } => {
+                        error!("Internal Server Error (Invalid Record): Offset {}, Reason: {}", offset, reason);
+                        (StatusCode::INTERNAL_SERVER_ERROR, "Internal storage error due to invalid data".to_string())
+                     }
+                     DbError::CrcMismatch { offset } => {
+                        error!("Internal Server Error (CRC Mismatch): Offset {}", offset);
+                        (StatusCode::INTERNAL_SERVER_ERROR, "Internal storage error due to data corruption".to_string())
+                     }
+                    _ => { // Catch-all for any other DbError variants like VersionMismatch, Config, Internal
                         error!("Internal server error (DB): {}", db_err);
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -92,6 +101,14 @@ impl IntoResponse for ApiError {
 }
 
 pub type ApiResult<T = Response> = Result<T, ApiError>;
+
+// --- NEW Health Check Handler ---
+/// Simple health check endpoint. Returns 200 OK if the server is running.
+pub async fn health_check() -> StatusCode {
+    debug!("Health check endpoint hit"); // Optional: Add debug log
+    StatusCode::OK
+}
+// --------------------------------
 
 pub async fn get_key(
     State(db): State<Arc<SimpleDb>>,
@@ -267,13 +284,16 @@ pub async fn trigger_save_snapshot(State(db): State<Arc<SimpleDb>>) -> ApiResult
 
 pub fn create_router(db: Arc<SimpleDb>) -> Router {
     Router::new()
+        // --- ADD Health Route ---
+        .route("/v1/health", get(health_check))
+        // ------------------------
         .route(
-            "/v1/keys/{key}", 
+            "/v1/keys/{key}", // Using {key} as confirmed working
             get(get_key).put(put_key).delete(delete_key),
         )
-        .route("/v1/keys/batch", post(batch_put)) // <-- Keep /v1 prefix
-        .route("/v1/keys/batch/get", post(batch_get)) // <-- Keep /v1 prefix
-        .route("/v1/admin/compact", post(trigger_compaction)) // <-- Keep /v1 prefix
-        .route("/v1/admin/save_snapshot", post(trigger_save_snapshot)) // <-- Keep /v1 prefix
+        .route("/v1/keys/batch", post(batch_put))
+        .route("/v1/keys/batch/get", post(batch_get))
+        .route("/v1/admin/compact", post(trigger_compaction))
+        .route("/v1/admin/save_snapshot", post(trigger_save_snapshot))
         .with_state(db)
 }
