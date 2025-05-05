@@ -9,7 +9,7 @@ use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-// Helper to spawn the server on a random available port
+// Helper function (spawn_app) remains the same...
 async fn spawn_app() -> (String, Arc<SimpleDb>) {
     // Find a free port
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
@@ -57,9 +57,7 @@ async fn test_api_put_get_delete_cycle() {
 
     let key = "api_cycle_key";
     let value_text = "api cycle value";
-    // --- MODIFIED URL ---
     let url = format!("{}/v1/keys/{}", addr, key);
-    // --------------------
 
     // 1. PUT the value
     let put_resp = client.put(&url)
@@ -75,9 +73,7 @@ async fn test_api_put_get_delete_cycle() {
         .await
         .expect("Failed to execute GET request");
     assert_eq!(get_resp.status(), StatusCode::OK);
-    // Check Content-Type might be octet-stream as we didn't store JSON
-     assert!(get_resp.headers().get("content-type").is_some());
-     // assert_eq!(get_resp.headers()["content-type"], "application/octet-stream");
+    assert!(get_resp.headers().get("content-type").is_some());
     assert_eq!(get_resp.text().await.unwrap(), value_text);
 
 
@@ -104,9 +100,7 @@ async fn test_api_get_not_found() {
     let (addr, _db) = spawn_app().await;
     let client = Client::new();
     let key = "key_that_does_not_exist";
-    // --- MODIFIED URL ---
     let url = format!("{}/v1/keys/{}", addr, key);
-    // --------------------
 
     let resp = client.get(&url).send().await.expect("GET failed");
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -119,23 +113,18 @@ async fn test_api_delete_not_found() {
     let (addr, _db) = spawn_app().await;
     let client = Client::new();
     let key = "delete_key_that_does_not_exist";
-    // --- MODIFIED URL ---
     let url = format!("{}/v1/keys/{}", addr, key);
-    // --------------------
 
     let resp = client.delete(&url).send().await.expect("DELETE failed");
-    // Idempotent DELETE returns 204 even if key wasn't there
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 }
 
 
 #[tokio::test]
 async fn test_api_batch_put() {
-    let (addr, db) = spawn_app().await; // Need DB handle to verify
+    let (addr, db) = spawn_app().await;
     let client = Client::new();
-    // --- MODIFIED URL ---
     let url = format!("{}/v1/keys/batch", addr);
-    // --------------------
 
     let payload = json!({
         "batch_api_1": "value_api_1",
@@ -151,7 +140,6 @@ async fn test_api_batch_put() {
 
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // Verify directly using DB handle
     assert_eq!(db.get(b"batch_api_1").unwrap().unwrap(), serde_json::to_vec("value_api_1").unwrap());
     assert_eq!(db.get(b"batch_api_2").unwrap().unwrap(), serde_json::to_vec(&42).unwrap());
     assert_eq!(db.get(b"batch_api_3").unwrap().unwrap(), serde_json::to_vec(&json!({"is_json": true})).unwrap());
@@ -159,18 +147,14 @@ async fn test_api_batch_put() {
 
 #[tokio::test]
 async fn test_api_batch_get() {
-    let (addr, db) = spawn_app().await; // Need DB handle to setup
+    let (addr, db) = spawn_app().await;
     let client = Client::new();
-    // --- MODIFIED URL ---
     let batch_get_url = format!("{}/v1/keys/batch/get", addr);
-    // --------------------
-    // Prefix unused variable with underscore
-    let _put_url_base = format!("{}/v1/keys", addr); // Also add /v1 here if used later
+    let _put_url_base = format!("{}/v1/keys", addr);
 
-    // Setup some data
     db.put(b"batch_get_1", &serde_json::to_vec("value_get_1").unwrap()).unwrap();
     db.put(b"batch_get_2", &serde_json::to_vec(&json!({"num": 123})).unwrap()).unwrap();
-    db.put(b"batch_get_plain", b"this is not json").unwrap(); // Store non-json
+    db.put(b"batch_get_plain", b"this is not json").unwrap();
 
     let keys_to_get = json!(["batch_get_1", "batch_get_2", "batch_get_plain", "batch_get_missing"]);
 
@@ -188,8 +172,8 @@ async fn test_api_batch_get() {
     assert_eq!(results.len(), 4);
     assert_eq!(results["batch_get_1"], Some(json!("value_get_1")));
     assert_eq!(results["batch_get_2"], Some(json!({"num": 123})));
-    assert_eq!(results["batch_get_plain"], None); // Non-JSON data returned as null
-    assert_eq!(results["batch_get_missing"], None); // Missing key returned as null
+    assert_eq!(results["batch_get_plain"], None);
+    assert_eq!(results["batch_get_missing"], None);
 
 }
 
@@ -198,26 +182,32 @@ async fn test_api_admin_endpoints() {
      let (addr, _db) = spawn_app().await;
      let client = Client::new();
 
-     // Test compaction trigger
-     // --- MODIFIED URL ---
      let compact_url = format!("{}/v1/admin/compact", addr);
-     // --------------------
      let compact_resp = client.post(&compact_url).send().await.expect("Compact request failed");
      assert_eq!(compact_resp.status(), StatusCode::ACCEPTED);
-     // Hard to verify background task finished easily here, check logs in debug
 
-     // Test snapshot trigger
-     // --- MODIFIED URL ---
      let snapshot_url = format!("{}/v1/admin/save_snapshot", addr);
-     // --------------------
      let snapshot_resp = client.post(&snapshot_url).send().await.expect("Snapshot request failed");
      assert_eq!(snapshot_resp.status(), StatusCode::OK);
-     // Could verify index file modification time changed if needed
 }
 
+// --- NEW Health Check Test ---
+#[tokio::test]
+async fn test_api_health_check() {
+    let (addr, _db) = spawn_app().await;
+    let client = Client::new();
+    let health_url = format!("{}/v1/health", addr);
+
+    let resp = client.get(&health_url)
+        .send()
+        .await
+        .expect("Health check request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    // Health check should ideally have an empty body or minimal text/plain confirmation
+    assert!(resp.content_length().unwrap_or(1) == 0, "Health check body should be empty");
+}
+// -----------------------------
+
 // Add more tests:
-// - PUT with large value (test 413)
-// - Batch PUT with invalid JSON in request body (test 400)
-// - Batch GET with invalid JSON array in request body (test 400)
-// - Test URL encoding for keys with special characters
-// - Test different Content-Types on PUT and corresponding GET results
+// ...
