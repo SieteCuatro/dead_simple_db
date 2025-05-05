@@ -1,3 +1,4 @@
+// tests/api_integration.rs
 use dead_simple_db::db::{SimpleDb, SyncStrategy}; // Access items from your crate
 use dead_simple_db::api; // Access API router function
 
@@ -56,7 +57,9 @@ async fn test_api_put_get_delete_cycle() {
 
     let key = "api_cycle_key";
     let value_text = "api cycle value";
-    let url = format!("{}/keys/{}", addr, key);
+    // --- MODIFIED URL ---
+    let url = format!("{}/v1/keys/{}", addr, key);
+    // --------------------
 
     // 1. PUT the value
     let put_resp = client.put(&url)
@@ -101,7 +104,9 @@ async fn test_api_get_not_found() {
     let (addr, _db) = spawn_app().await;
     let client = Client::new();
     let key = "key_that_does_not_exist";
-    let url = format!("{}/keys/{}", addr, key);
+    // --- MODIFIED URL ---
+    let url = format!("{}/v1/keys/{}", addr, key);
+    // --------------------
 
     let resp = client.get(&url).send().await.expect("GET failed");
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -114,7 +119,9 @@ async fn test_api_delete_not_found() {
     let (addr, _db) = spawn_app().await;
     let client = Client::new();
     let key = "delete_key_that_does_not_exist";
-    let url = format!("{}/keys/{}", addr, key);
+    // --- MODIFIED URL ---
+    let url = format!("{}/v1/keys/{}", addr, key);
+    // --------------------
 
     let resp = client.delete(&url).send().await.expect("DELETE failed");
     // Idempotent DELETE returns 204 even if key wasn't there
@@ -126,7 +133,9 @@ async fn test_api_delete_not_found() {
 async fn test_api_batch_put() {
     let (addr, db) = spawn_app().await; // Need DB handle to verify
     let client = Client::new();
-    let url = format!("{}/keys/batch", addr);
+    // --- MODIFIED URL ---
+    let url = format!("{}/v1/keys/batch", addr);
+    // --------------------
 
     let payload = json!({
         "batch_api_1": "value_api_1",
@@ -152,9 +161,11 @@ async fn test_api_batch_put() {
 async fn test_api_batch_get() {
     let (addr, db) = spawn_app().await; // Need DB handle to setup
     let client = Client::new();
-    let batch_get_url = format!("{}/keys/batch/get", addr);
+    // --- MODIFIED URL ---
+    let batch_get_url = format!("{}/v1/keys/batch/get", addr);
+    // --------------------
     // Prefix unused variable with underscore
-    let _put_url_base = format!("{}/keys", addr);
+    let _put_url_base = format!("{}/v1/keys", addr); // Also add /v1 here if used later
 
     // Setup some data
     db.put(b"batch_get_1", &serde_json::to_vec("value_get_1").unwrap()).unwrap();
@@ -188,13 +199,17 @@ async fn test_api_admin_endpoints() {
      let client = Client::new();
 
      // Test compaction trigger
-     let compact_url = format!("{}/admin/compact", addr);
+     // --- MODIFIED URL ---
+     let compact_url = format!("{}/v1/admin/compact", addr);
+     // --------------------
      let compact_resp = client.post(&compact_url).send().await.expect("Compact request failed");
      assert_eq!(compact_resp.status(), StatusCode::ACCEPTED);
      // Hard to verify background task finished easily here, check logs in debug
 
      // Test snapshot trigger
-     let snapshot_url = format!("{}/admin/save_snapshot", addr);
+     // --- MODIFIED URL ---
+     let snapshot_url = format!("{}/v1/admin/save_snapshot", addr);
+     // --------------------
      let snapshot_resp = client.post(&snapshot_url).send().await.expect("Snapshot request failed");
      assert_eq!(snapshot_resp.status(), StatusCode::OK);
      // Could verify index file modification time changed if needed

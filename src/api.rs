@@ -1,3 +1,4 @@
+// src/api.rs
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -267,14 +268,12 @@ pub async fn trigger_save_snapshot(State(db): State<Arc<SimpleDb>>) -> ApiResult
 pub fn create_router(db: Arc<SimpleDb>) -> Router {
     Router::new()
         .route(
-            // --- UPDATED PATH SYNTAX ---
-            "/keys/{key}", // Use curly braces instead of colon
-            // --------------------------
+            "/v1/keys/{key}", 
             get(get_key).put(put_key).delete(delete_key),
         )
-        .route("/keys/batch", post(batch_put))
-        .route("/keys/batch/get", post(batch_get))
-        .route("/admin/compact", post(trigger_compaction))
-        .route("/admin/save_snapshot", post(trigger_save_snapshot))
+        .route("/v1/keys/batch", post(batch_put)) // <-- Keep /v1 prefix
+        .route("/v1/keys/batch/get", post(batch_get)) // <-- Keep /v1 prefix
+        .route("/v1/admin/compact", post(trigger_compaction)) // <-- Keep /v1 prefix
+        .route("/v1/admin/save_snapshot", post(trigger_save_snapshot)) // <-- Keep /v1 prefix
         .with_state(db)
 }

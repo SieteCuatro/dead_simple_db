@@ -158,11 +158,11 @@ cargo test
 
 ## API Endpoints
 
-The following examples assume the server is running on the default `http://127.0.0.1:7878`. Adjust the address if you configured it differently.
+All API endpoints are prefixed with `/v1`. The following examples assume the server is running on the default `http://127.0.0.1:7878`. Adjust the address if you configured it differently.
 
 ---
 
-**`GET /keys/{key}`**
+**`GET /v1/keys/{key}`**
 
 *   **Method:** `GET`
 *   **Description:** Retrieves the value associated with the given `{key}`.
@@ -179,15 +179,15 @@ The following examples assume the server is running on the default `http://127.0
 *   **Example (`curl`):**
     ```bash
     # Get key 'mykey' (assuming value is plain text or binary)
-    curl -v http://127.0.0.1:7878/keys/mykey
+    curl -v http://127.0.0.1:7878/v1/keys/mykey
 
     # Get key 'my_json_key' (assuming value is JSON)
-    curl http://127.0.0.1:7878/keys/my_json_key | jq .
+    curl http://127.0.0.1:7878/v1/keys/my_json_key | jq .
     ```
 
 ---
 
-**`PUT /keys/{key}`**
+**`PUT /v1/keys/{key}`**
 
 *   **Method:** `PUT`
 *   **Description:** Stores or updates the value for the given `{key}`. This is an upsert operation. The request body is stored as raw bytes.
@@ -203,18 +203,18 @@ The following examples assume the server is running on the default `http://127.0
 *   **Example (`curl`):**
     ```bash
     # Put plain text value
-    curl -X PUT -v -H "Content-Type: text/plain" --data "This is the value" http://127.0.0.1:7878/keys/mytextkey
+    curl -X PUT -v -H "Content-Type: text/plain" --data "This is the value" http://127.0.0.1:7878/v1/keys/mytextkey
 
     # Put JSON value
-    curl -X PUT -v -H "Content-Type: application/json" --data '{"message": "hello", "count": 5}' http://127.0.0.1:7878/keys/myjsonkey
+    curl -X PUT -v -H "Content-Type: application/json" --data '{"message": "hello", "count": 5}' http://127.0.0.1:7878/v1/keys/myjsonkey
 
     # Put binary data from a file
-    curl -X PUT -v -H "Content-Type: application/octet-stream" --data-binary "@./image.jpg" http://127.0.0.1:7878/keys/myimage
+    curl -X PUT -v -H "Content-Type: application/octet-stream" --data-binary "@./image.jpg" http://127.0.0.1:7878/v1/keys/myimage
     ```
 
 ---
 
-**`DELETE /keys/{key}`**
+**`DELETE /v1/keys/{key}`**
 
 *   **Method:** `DELETE`
 *   **Description:** Removes the key and its associated value from the database by writing a deletion marker (tombstone) to the log.
@@ -226,12 +226,12 @@ The following examples assume the server is running on the default `http://127.0
     *   **Code:** `500 Internal Server Error`, Body: `{"error": "..."}`
 *   **Example (`curl`):**
     ```bash
-    curl -X DELETE -v http://127.0.0.1:7878/keys/mykey_to_delete
+    curl -X DELETE -v http://127.0.0.1:7878/v1/keys/mykey_to_delete
     ```
 
 ---
 
-**`POST /keys/batch`**
+**`POST /v1/keys/batch`**
 
 *   **Method:** `POST`
 *   **Description:** Stores or updates multiple key-value pairs efficiently in a single request. Values are internally serialized to their JSON byte representation before storage.
@@ -253,12 +253,12 @@ The following examples assume the server is running on the default `http://127.0
     ```bash
     curl -X POST -v -H "Content-Type: application/json" \
          --data '{"keyA": "valA", "keyB": 100, "keyC": null}' \
-         http://127.0.0.1:7878/keys/batch
+         http://127.0.0.1:7878/v1/keys/batch
     ```
 
 ---
 
-**`POST /keys/batch/get`**
+**`POST /v1/keys/batch/get`**
 
 *   **Method:** `POST`
 *   **Description:** Retrieves the values for multiple specified keys efficiently in a single request.
@@ -288,12 +288,12 @@ The following examples assume the server is running on the default `http://127.0
     ```bash
     curl -X POST -v -H "Content-Type: application/json" \
          --data '["keyA", "key_does_not_exist", "keyC"]' \
-         http://127.0.0.1:7878/keys/batch/get | jq .
+         http://127.0.0.1:7878/v1/keys/batch/get | jq .
     ```
 
 ---
 
-**`POST /admin/compact`**
+**`POST /v1/admin/compact`**
 
 *   **Method:** `POST`
 *   **Description:** **Asynchronously** triggers the log compaction process. The server responds immediately while compaction runs in the background. See server logs for completion status or errors during compaction. This is idempotent; if compaction is already running (e.g., triggered automatically), the request will likely still return `202 Accepted` but will not start a second concurrent compaction.
@@ -303,12 +303,12 @@ The following examples assume the server is running on the default `http://127.0
     *   **Code:** `500 Internal Server Error`, Body: `{"error": "..."}` (If there's an issue initiating the background task itself).
 *   **Example (`curl`):**
     ```bash
-    curl -X POST -v http://127.0.0.1:7878/admin/compact
+    curl -X POST -v http://127.0.0.1:7878/v1/admin/compact
     ```
 
 ---
 
-**`POST /admin/save_snapshot`**
+**`POST /v1/admin/save_snapshot`**
 
 *   **Method:** `POST`
 *   **Description:** **Synchronously** saves the current state of the in-memory index to the configured index snapshot file. The server will wait for the snapshot to complete before responding. This is idempotent; if a snapshot is already running (e.g., triggered automatically), the request might block or fail depending on internal locking, but typically results in a successful response once a snapshot is complete.
@@ -318,7 +318,7 @@ The following examples assume the server is running on the default `http://127.0
     *   **Code:** `500 Internal Server Error`, Body: `{"error": "..."}` (If saving or syncing the snapshot file fails).
 *   **Example (`curl`):**
     ```bash
-    curl -X POST -v http://127.0.0.1:7878/admin/save_snapshot
+    curl -X POST -v http://127.0.0.1:7878/v1/admin/save_snapshot
     ```
 
 ---
